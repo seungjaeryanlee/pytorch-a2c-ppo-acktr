@@ -57,7 +57,8 @@ class RolloutStorage(object):
             self.value_preds[-1] = next_value
             gae = 0
             for step in reversed(range(self.rewards.size(0))):
-                delta = self.rewards[step] + gamma * self.value_preds[step + 1] * self.masks[step + 1] - self.value_preds[step]
+                delta = self.rewards[step] + gamma * self.value_preds[step + 1] * \
+                    self.masks[step + 1] - self.value_preds[step]
                 gae = delta + gamma * tau * self.masks[step + 1] * gae
                 self.returns[step] = gae + self.value_preds[step]
         else:
@@ -65,7 +66,6 @@ class RolloutStorage(object):
             for step in reversed(range(self.rewards.size(0))):
                 self.returns[step] = self.returns[step + 1] * \
                     gamma * self.masks[step + 1] + self.rewards[step]
-
 
     def feed_forward_generator(self, advantages, num_mini_batch):
         num_steps, num_processes = self.rewards.size()[0:2]
@@ -80,7 +80,7 @@ class RolloutStorage(object):
         for indices in sampler:
             obs_batch = self.obs[:-1].view(-1, *self.obs.size()[2:])[indices]
             recurrent_hidden_states_batch = self.recurrent_hidden_states[:-1].view(-1,
-                self.recurrent_hidden_states.size(-1))[indices]
+                                                                                   self.recurrent_hidden_states.size(-1))[indices]
             actions_batch = self.actions.view(-1, self.actions.size(-1))[indices]
             value_preds_batch = self.value_preds[:-1].view(-1, 1)[indices]
             return_batch = self.returns[:-1].view(-1, 1)[indices]
@@ -139,8 +139,8 @@ class RolloutStorage(object):
             value_preds_batch = _flatten_helper(T, N, value_preds_batch)
             return_batch = _flatten_helper(T, N, return_batch)
             masks_batch = _flatten_helper(T, N, masks_batch)
-            old_action_log_probs_batch = _flatten_helper(T, N, \
-                    old_action_log_probs_batch)
+            old_action_log_probs_batch = _flatten_helper(T, N,
+                                                         old_action_log_probs_batch)
             adv_targ = _flatten_helper(T, N, adv_targ)
 
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
