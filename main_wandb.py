@@ -19,11 +19,6 @@ from a2c_ppo_acktr.utils import get_vec_normalize, update_linear_schedule
 
 args = get_args()
 
-assert args.algo in ['a2c', 'ppo', 'acktr']
-if args.recurrent_policy:
-    assert args.algo in ['a2c', 'ppo'], \
-        'Recurrent policy is not implemented for ACKTR'
-
 num_updates = int(args.num_env_steps) // args.num_steps // args.num_processes
 
 torch.manual_seed(args.seed)
@@ -65,19 +60,10 @@ def main():
     actor_critic.to(device)
 
 
-    if args.algo == 'a2c':
-        agent = algo.A2C_ACKTR(actor_critic, args.value_loss_coef,
-                               args.entropy_coef, lr=args.lr,
-                               eps=args.eps, alpha=args.alpha,
-                               max_grad_norm=args.max_grad_norm)
-    elif args.algo == 'ppo':
-        agent = algo.PPO(actor_critic, args.clip_param, args.ppo_epoch, args.num_mini_batch,
-                         args.value_loss_coef, args.entropy_coef, lr=args.lr,
-                               eps=args.eps,
-                               max_grad_norm=args.max_grad_norm)
-    elif args.algo == 'acktr':
-        agent = algo.A2C_ACKTR(actor_critic, args.value_loss_coef,
-                               args.entropy_coef, acktr=True)
+    agent = algo.PPO(actor_critic, args.clip_param, args.ppo_epoch, args.num_mini_batch,
+                     args.value_loss_coef, args.entropy_coef, lr=args.lr,
+                     eps=args.eps,
+                     max_grad_norm=args.max_grad_norm)
 
     rollouts = RolloutStorage(args.num_steps, args.num_processes,
                         envs.observation_space.shape, envs.action_space,
@@ -93,15 +79,9 @@ def main():
     for j in range(num_updates):
 
         if args.use_linear_lr_decay:
-            # decrease learning rate linearly
-            if args.algo == "acktr":
-                # use optimizer's learning rate since it's hard-coded in kfac.py
-                update_linear_schedule(agent.optimizer, j, num_updates, agent.optimizer.lr)
-            else:
-                update_linear_schedule(agent.optimizer, j, num_updates, args.lr)
+            update_linear_schedule(agent.optimizer, j, num_updates, args.lr)
 
-        if args.algo == 'ppo' and args.use_linear_clip_decay:
-            agent.clip_param = args.clip_param  * (1 - j / float(num_updates))
+        agent.clip_param = args.clip_param  * (1 - j / float(num_updates))
 
         for step in range(args.num_steps):
             # Sample actions
@@ -136,7 +116,7 @@ def main():
 
         # save for every interval-th episode or for the last epoch
         if (j % args.save_interval == 0 or j == num_updates - 1) and args.save_dir != "":
-            save_path = os.path.join(args.save_dir, args.algo)
+            save_path = os.path.join(args.save_dir, 'ppo')
             try:
                 os.makedirs(save_path)
             except OSError:
