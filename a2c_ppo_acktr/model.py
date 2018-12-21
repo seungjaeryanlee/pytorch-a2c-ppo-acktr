@@ -144,7 +144,6 @@ class NNBase(nn.Module):
             # add t=0 and t=T to the list
             has_zeros = [0] + has_zeros + [T]
 
-
             hxs = hxs.unsqueeze(0)
             outputs = []
             for i in range(len(has_zeros) - 1):
@@ -216,9 +215,9 @@ class MLPBase(NNBase):
             num_inputs = hidden_size
 
         init_ = lambda m: init(m,
-            nn.init.orthogonal_,
-            lambda x: nn.init.constant_(x, 0),
-            np.sqrt(2))
+                               nn.init.orthogonal_,
+                               lambda x: nn.init.constant_(x, 0),
+                               np.sqrt(2))
 
         self.actor = nn.Sequential(
             init_(nn.Linear(num_inputs, hidden_size)),
