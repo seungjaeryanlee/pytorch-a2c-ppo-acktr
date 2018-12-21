@@ -15,7 +15,6 @@ from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import Policy
 from a2c_ppo_acktr.storage import RolloutStorage
 from a2c_ppo_acktr.utils import get_vec_normalize, update_linear_schedule
-from a2c_ppo_acktr.visualize import visdom_plot
 
 
 args = get_args()
@@ -57,11 +56,6 @@ def main():
 
     # Setup wandb
     wandb.init(project='ppo')
-
-    if args.vis:
-        from visdom import Visdom
-        viz = Visdom(port=args.port)
-        win = None
 
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                         args.gamma, args.log_dir, args.add_timestep, device, False)
@@ -220,14 +214,6 @@ def main():
             print(" Evaluation using {} episodes: mean reward {:.5f}\n".
                 format(len(eval_episode_rewards),
                        np.mean(eval_episode_rewards)))
-
-        if args.vis and j % args.vis_interval == 0:
-            try:
-                # Sometimes monitor doesn't properly flush the outputs
-                win = visdom_plot(viz, win, args.log_dir, args.env_name,
-                                  args.algo, args.num_env_steps)
-            except IOError:
-                pass
 
 
 if __name__ == "__main__":
