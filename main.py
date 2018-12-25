@@ -7,12 +7,15 @@ from collections import deque
 
 import numpy as np
 import torch
+import torch.nn.functional as F
+import torch.optim as optim
 import wandb
 
 from a2c_ppo_acktr import algo
 from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import Policy
+from a2c_ppo_acktr.rnd_model import RNDNetwork
 from a2c_ppo_acktr.storage import RolloutStorage
 from a2c_ppo_acktr.utils import get_vec_normalize, update_linear_schedule
 
@@ -44,6 +47,21 @@ except OSError:
     for f in files:
         os.remove(f)
 
+rnd_target_net = RNDNetwork(4, 128)
+rnd_predictor_net = RNDNetwork(4, 128)
+rnd_optimizer = optim.Adam(rnd_predictor_net.parameters())
+
+def _get_int_reward(state):
+    with torch.no_grad():
+        target = rnd_target_net(state)
+    prediction = rnd_predictor_net(state)
+
+    return F.mse_loss(target, prediction)
+
+def _train_rnd_predictor(rnd_loss):
+    rnd_optimizer.zero_grad()
+    rnd_loss.backward()
+    rnd_optimizer.step()
 
 def main():
     torch.set_num_threads(1)
@@ -92,7 +110,14 @@ def main():
                     rollouts.masks[step])
 
             # Obser reward and next obs
-            obs, reward, done, infos = envs.step(action)
+            obs, ext_reward, done, infos = envs.step(action)
+
+            # Compute reward
+            int_reward = _get_int_reward(obs)
+            reward = ext_reward + int_reward
+
+            # Update RND Predictor
+            _train_rnd_predictor(int_reward)
 
             for info in infos:
                 if 'episode' in info.keys():
@@ -101,7 +126,7 @@ def main():
             # If done then clean the history of observations.
             masks = torch.FloatTensor([[0.0] if done_ else [1.0]
                                        for done_ in done])
-            rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, reward, masks)
+            rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, ext_reward, masks)
 
         with torch.no_grad():
             next_value = actor_critic.get_value(rollouts.obs[-1],
