@@ -51,6 +51,7 @@ def main():
 
     # Setup wandb
     wandb.init(project='ppo')
+    wandb.config.update(args)
 
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                          args.gamma, args.log_dir, args.add_timestep, device, False)
