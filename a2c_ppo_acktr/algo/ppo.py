@@ -19,11 +19,12 @@ class PPO():
         Parameters
         ----------
         clip_param : float
-            PPO clip parameter. Denoted $\epsilon$.
+            PPO clip parameter. Denoted $\\epsilon$.
         ppo_epoch : int
             Number of epochs to optimize surrogate loss. Denoted $K$.
         num_mini_batch : int
-            Minibatch size for PPO. Denoted $M$. Should be less than $NT$, where $N$ is number of actors and $T$ is "horizon," or number of timesteps.
+            Minibatch size for PPO. Denoted $M$. Should be less than $NT$,
+            where $N$ is number of actors and $T$ is "horizon," or number of timesteps.
         value_loss_coef : float
             VF coefficient for scaling value function MSE loss. Denoted $c_1$.
         entropy_coef : float
@@ -74,7 +75,7 @@ class PPO():
                     obs_batch, recurrent_hidden_states_batch,
                     masks_batch, actions_batch)
 
-                ## CLIP
+                # Compute CLIP loss
                 # surr1: r_t(theta) * A_t
                 ratio = torch.exp(action_log_probs - old_action_log_probs_batch)
                 surr1 = ratio * adv_targ
@@ -84,7 +85,7 @@ class PPO():
                 # TODO Why minus here?
                 action_loss = -torch.min(surr1, surr2).mean()
 
-                ## VF
+                # Compute VF loss
                 if self.use_clipped_value_loss:
                     value_pred_clipped = value_preds_batch + \
                         (values - value_preds_batch).clamp(-self.clip_param, self.clip_param)
@@ -94,7 +95,7 @@ class PPO():
                 else:
                     value_loss = 0.5 * (return_batch - values).pow(2).mean()
 
-                ## CLIP+VF+S
+                # Compute CLIP+VF+S (total) loss
                 self.optimizer.zero_grad()
                 # TODO c_1 * L^{VF} + L^{CLIP} - c_2 *S
                 # Aren't the signs wrong?

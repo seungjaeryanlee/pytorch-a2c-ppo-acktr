@@ -7,8 +7,6 @@ from collections import deque
 
 import numpy as np
 import torch
-import torch.nn.functional as F
-import torch.optim as optim
 import wandb
 
 from a2c_ppo_acktr import algo
@@ -19,7 +17,7 @@ from a2c_ppo_acktr.storage import RolloutStorage
 from a2c_ppo_acktr.utils import get_vec_normalize, update_linear_schedule
 
 
-def add_log(total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss):
+def add_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss):
     """
     Print log to console and add log to wandb.
     """
@@ -49,6 +47,7 @@ def add_log(total_num_steps, start, end, episode_rewards, dist_entropy, value_lo
         'value_loss': value_loss,
         'action_loss': action_loss,
     }, step=j)
+
 
 def main():
     args = get_args()
@@ -168,7 +167,7 @@ def main():
 
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             end = time.time()
-            add_log(total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss)
+            add_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss)
 
         if (args.eval_interval is not None
                 and len(episode_rewards) > 1
