@@ -49,14 +49,14 @@ def get_args():
                         help='ppo clip parameter (default: 0.1)')
     parser.add_argument('--use-linear-clip-decay', action='store_true', default=False,
                         help='use a linear schedule on the ppo clipping parameter')
-
-    # Hyperparameters - Misc.
     parser.add_argument('--entropy-coef', type=float, default=0.01,
                         help='entropy term coefficient (default: 0.01)')
     parser.add_argument('--value-loss-coef', type=float, default=0.5,
                         help='value loss coefficient (default: 0.5)')
     parser.add_argument('--max-grad-norm', type=float, default=0.5,
                         help='max norm of gradients (default: 0.5)')
+
+    # Hyperparameters - Misc.
     parser.add_argument('--num-steps', type=int, default=5,
                         help='number of forward steps in A2C (default: 5)')
 

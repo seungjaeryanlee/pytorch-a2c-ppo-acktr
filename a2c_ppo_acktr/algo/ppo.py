@@ -15,16 +15,33 @@ class PPO():
                  eps=None,
                  max_grad_norm=None,
                  use_clipped_value_loss=True):
-
+        """
+        Parameters
+        ----------
+        clip_param : float
+            PPO clip parameter. Denoted $\epsilon$.
+        ppo_epoch : int
+            Number of epochs to optimize surrogate loss. Denoted $K$.
+        num_mini_batch : int
+            Minibatch size for PPO. Denoted $M$. Should be less than $NT$, where $N$ is number of actors and $T$ is "horizon," or number of timesteps.
+        value_loss_coef : float
+            VF coefficient for scaling value function MSE loss. Denoted $c_1$.
+        entropy_coef : float
+            Entropy coefficient or scaling entropy bonus. Denoted $c_2$.
+        lr : float
+            Learning rate for Adam optimizer. Optional.
+        eps: float
+            Epsilon for Adam optimizer. Improves numerical stability. Optional.
+        max_grad_norm : float
+            Optional.
+        use_clipped_value_loss : bool
+        """
         self.actor_critic = actor_critic
-
         self.clip_param = clip_param
         self.ppo_epoch = ppo_epoch
         self.num_mini_batch = num_mini_batch
-
         self.value_loss_coef = value_loss_coef
         self.entropy_coef = entropy_coef
-
         self.max_grad_norm = max_grad_norm
         self.use_clipped_value_loss = use_clipped_value_loss
 
@@ -57,11 +74,17 @@ class PPO():
                     obs_batch, recurrent_hidden_states_batch,
                     masks_batch, actions_batch)
 
+                ## CLIP
+                # surr1: r_t(theta) * A_t
                 ratio = torch.exp(action_log_probs - old_action_log_probs_batch)
                 surr1 = ratio * adv_targ
+                # surr2: clip(r_t(theta), 1-e, 1+e) * A_t
                 surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
+                # L^CLIP = min(surr1, surr2)
+                # TODO Why minus here?
                 action_loss = -torch.min(surr1, surr2).mean()
 
+                ## VF
                 if self.use_clipped_value_loss:
                     value_pred_clipped = value_preds_batch + \
                         (values - value_preds_batch).clamp(-self.clip_param, self.clip_param)
@@ -71,7 +94,10 @@ class PPO():
                 else:
                     value_loss = 0.5 * (return_batch - values).pow(2).mean()
 
+                ## CLIP+VF+S
                 self.optimizer.zero_grad()
+                # TODO c_1 * L^{VF} + L^{CLIP} - c_2 *S
+                # Aren't the signs wrong?
                 (value_loss * self.value_loss_coef + action_loss -
                  dist_entropy * self.entropy_coef).backward()
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(),

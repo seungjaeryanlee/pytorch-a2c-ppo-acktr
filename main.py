@@ -106,7 +106,7 @@ def main():
     rollouts.to(device)
 
     episode_rewards = deque(maxlen=10)
-ㅋ
+
     start = time.time()
     for j in range(num_updates):
 
