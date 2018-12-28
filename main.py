@@ -15,55 +15,70 @@ from a2c_ppo_acktr import algo
 from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import Policy
-from a2c_ppo_acktr.rnd_model import RNDNetwork
 from a2c_ppo_acktr.storage import RolloutStorage
 from a2c_ppo_acktr.utils import get_vec_normalize, update_linear_schedule
 
 
-args = get_args()
+def add_log(total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss):
+    """
+    Print log to console and add log to wandb.
+    """
+    print("Updates {}, num timesteps {}, FPS {}".format(
+        j, total_num_steps, int(total_num_steps / (end - start))
+    ))
+    print("Last {} training episodes: ".format(len(episode_rewards)))
+    print(" - mean/median reward {:.1f}/{:.1f}".format(
+        np.mean(episode_rewards),
+        np.median(episode_rewards),
+    ))
+    print(" - min/max reward {:.1f}/{:.1f}\n".format(
+        np.min(episode_rewards),
+        np.max(episode_rewards),
+    ))
+    print(' - dist_entropy {}'.format(dist_entropy))
+    print(' - value_loss {}'.format(value_loss))
+    print(' - action_loss {}'.format(action_loss))
 
-num_updates = int(args.num_env_steps) // args.num_steps // args.num_processes
-
-torch.manual_seed(args.seed)
-torch.cuda.manual_seed_all(args.seed)
-
-if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-
-try:
-    os.makedirs(args.log_dir)
-except OSError:
-    files = glob.glob(os.path.join(args.log_dir, '*.monitor.csv'))
-    for f in files:
-        os.remove(f)
-
-eval_log_dir = args.log_dir + "_eval"
-
-try:
-    os.makedirs(eval_log_dir)
-except OSError:
-    files = glob.glob(os.path.join(eval_log_dir, '*.monitor.csv'))
-    for f in files:
-        os.remove(f)
-
-rnd_target_net = RNDNetwork(4, 128)
-rnd_predictor_net = RNDNetwork(4, 128)
-rnd_optimizer = optim.Adam(rnd_predictor_net.parameters())
-
-def _get_int_reward(state):
-    with torch.no_grad():
-        target = rnd_target_net(state)
-    prediction = rnd_predictor_net(state)
-
-    return F.mse_loss(target, prediction)
-
-def _train_rnd_predictor(rnd_loss):
-    rnd_optimizer.zero_grad()
-    rnd_loss.backward()
-    rnd_optimizer.step()
+    wandb.log({
+        'FPS': int(total_num_steps / (end - start)),
+        'Mean reward': np.mean(episode_rewards),
+        'Median reward': np.median(episode_rewards),
+        'Min reward': np.min(episode_rewards),
+        'Max reward': np.max(episode_rewards),
+        'dist_entropy': dist_entropy,
+        'value_loss': value_loss,
+        'action_loss': action_loss,
+    }, step=j)
 
 def main():
+    args = get_args()
+
+    num_updates = int(args.num_env_steps) // args.num_steps // args.num_processes
+
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
+    if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+    try:
+        os.makedirs(args.log_dir)
+    except OSError:
+        files = glob.glob(os.path.join(args.log_dir, '*.monitor.csv'))
+        for f in files:
+            os.remove(f)
+
+    eval_log_dir = args.log_dir + "_eval"
+
+    try:
+        os.makedirs(eval_log_dir)
+    except OSError:
+        files = glob.glob(os.path.join(eval_log_dir, '*.monitor.csv'))
+        for f in files:
+            os.remove(f)
+
+    # 1 core per environment
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
@@ -71,28 +86,27 @@ def main():
     wandb.init(project='ppo')
     wandb.config.update(args)
 
+    # Setup Environment
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                          args.gamma, args.log_dir, args.add_timestep, device, False)
+    obs = envs.reset()
 
+    # Setup Agent
     actor_critic = Policy(envs.observation_space.shape, envs.action_space,
                           base_kwargs={'recurrent': args.recurrent_policy})
     actor_critic.to(device)
-
     agent = algo.PPO(actor_critic, args.clip_param, args.ppo_epoch, args.num_mini_batch,
                      args.value_loss_coef, args.entropy_coef, lr=args.lr,
                      eps=args.eps,
                      max_grad_norm=args.max_grad_norm)
-
     rollouts = RolloutStorage(args.num_steps, args.num_processes,
                               envs.observation_space.shape, envs.action_space,
-                              actor_critic.recurrent_hidden_state_size)
-
-    obs = envs.reset()
+                              actor_critic.recurrent_hidden_state_size)    
     rollouts.obs[0].copy_(obs)
     rollouts.to(device)
 
     episode_rewards = deque(maxlen=10)
-
+ㅋ
     start = time.time()
     for j in range(num_updates):
 
@@ -110,14 +124,7 @@ def main():
                     rollouts.masks[step])
 
             # Obser reward and next obs
-            obs, ext_reward, done, infos = envs.step(action)
-
-            # Compute reward
-            int_reward = _get_int_reward(obs)
-            reward = ext_reward + int_reward
-
-            # Update RND Predictor
-            _train_rnd_predictor(int_reward)
+            obs, reward, done, infos = envs.step(action)
 
             for info in infos:
                 if 'episode' in info.keys():
@@ -126,7 +133,7 @@ def main():
             # If done then clean the history of observations.
             masks = torch.FloatTensor([[0.0] if done_ else [1.0]
                                        for done_ in done])
-            rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, ext_reward, masks)
+            rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, reward, masks)
 
         with torch.no_grad():
             next_value = actor_critic.get_value(rollouts.obs[-1],
@@ -161,32 +168,7 @@ def main():
 
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             end = time.time()
-            print("Updates {}, num timesteps {}, FPS {}".format(
-                j, total_num_steps, int(total_num_steps / (end - start))
-            ))
-            print("Last {} training episodes: ".format(len(episode_rewards)))
-            print(" - mean/median reward {:.1f}/{:.1f}".format(
-                np.mean(episode_rewards),
-                np.median(episode_rewards),
-            ))
-            print(" - min/max reward {:.1f}/{:.1f}\n".format(
-                np.min(episode_rewards),
-                np.max(episode_rewards),
-            ))
-            print(' - dist_entropy {}'.format(dist_entropy))
-            print(' - value_loss {}'.format(value_loss))
-            print(' - action_loss {}'.format(action_loss))
-
-            wandb.log({
-                'FPS': int(total_num_steps / (end - start)),
-                'Mean reward': np.mean(episode_rewards),
-                'Median reward': np.median(episode_rewards),
-                'Min reward': np.min(episode_rewards),
-                'Max reward': np.max(episode_rewards),
-                'dist_entropy': dist_entropy,
-                'value_loss': value_loss,
-                'action_loss': action_loss,
-            }, step=j)
+            add_log(total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss)
 
         if (args.eval_interval is not None
                 and len(episode_rewards) > 1
