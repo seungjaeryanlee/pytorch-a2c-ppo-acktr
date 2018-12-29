@@ -80,41 +80,38 @@ def clear_log_dirs(log_dir, eval_log_dir):
 def main():
     args = get_args()
 
-    num_updates = int(args.num_env_steps) // args.num_steps // args.num_processes
-
     # Make results reproducible
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-    if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
+    torch.manual_seed(args.SEED)
+    torch.cuda.manual_seed_all(args.SEED)
+    if args.USE_CUDA and torch.cuda.is_available() and args.CUDA_DETERMINISTIC:
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
     # Cleanup log directories
-    eval_log_dir = args.log_dir + "_eval"
-    clear_log_dirs(args.log_dir, eval_log_dir)
+    EVAL_LOG_DIR = args.LOG_DIR + "_eval"
+    clear_log_dirs(args.LOG_DIR, EVAL_LOG_DIR)
 
     # 1 core per environment
     torch.set_num_threads(1)
-    device = torch.device("cuda:0" if args.cuda else "cpu")
+    device = torch.device("cuda:0" if args.USE_CUDA else "cpu")
 
     # Setup wandb
     wandb.init(project='ppo')
     wandb.config.update(args)
 
     # Setup Environment
-    envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
-                         args.gamma, args.log_dir, args.add_timestep, device, False)
+    envs = make_vec_envs(args.ENV_NAME, args.SEED, args.NUM_PROCESSES,
+                         args.GAMMA, args.LOG_DIR, args.add_timestep, device, False)
     obs = envs.reset()
 
     # Setup Agent
     actor_critic = Policy(envs.observation_space.shape, envs.action_space,
                           base_kwargs={'recurrent': args.recurrent_policy})
     actor_critic.to(device)
-    agent = algo.PPO(actor_critic, args.clip_param, args.ppo_epoch, args.num_mini_batch,
-                     args.value_loss_coef, args.entropy_coef, lr=args.lr,
-                     eps=args.eps,
-                     max_grad_norm=args.max_grad_norm)
-    rollouts = RolloutStorage(args.num_steps, args.num_processes,
+    agent = algo.PPO(actor_critic, args.CLIP_PARAM, args.PPO_EPOCH, args.NUM_MINI_BATCH,
+                     args.VALUE_LOSS_COEF, args.ENTROPY_COEF, lr=args.LR,
+                     eps=args.EPS, max_grad_norm=args.MAX_GRAD_NORM)
+    rollouts = RolloutStorage(args.NUM_STEPS, args.NUM_PROCESSES,
                               envs.observation_space.shape, envs.action_space,
                               actor_critic.recurrent_hidden_state_size)
     rollouts.obs[0].copy_(obs)
@@ -122,18 +119,20 @@ def main():
 
     # TODO Magic number 10
     episode_rewards = deque(maxlen=10)
+    NUM_UPDATES = int(args.NUM_ENV_STEPS) // args.NUM_STEPS // args.NUM_PROCESSES
 
     start = time.time()
-    for j in range(num_updates):
+    for j in range(NUM_UPDATES):
 
         # Decrease learning rate of optimizer linearly
-        if args.use_linear_lr_decay:
-            update_linear_schedule(agent.optimizer, j, num_updates, args.lr)
+        if args.USE_LINEAR_LR_DECAY:
+            update_linear_schedule(agent.optimizer, j, NUM_UPDATES, args.LR)
 
-        # TODO Why is clip_param modified this way?
-        agent.clip_param = args.clip_param * (1 - j / float(num_updates))
+        # TODO Why is CLIP_PARAM modified this way?
+        # TODO Shouldn't this be conditioned on args.USE_LINEAR_CLIP_DELAY ?
+        agent.CLIP_PARAM = args.CLIP_PARAM * (1 - j / float(NUM_UPDATES))
 
-        for step in range(args.num_steps):
+        for step in range(args.NUM_STEPS):
             # Sample actions
             with torch.no_grad():
                 value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
@@ -157,15 +156,15 @@ def main():
                                                 rollouts.recurrent_hidden_states[-1],
                                                 rollouts.masks[-1]).detach()
 
-        rollouts.compute_returns(next_value, args.use_gae, args.gamma, args.tau)
+        rollouts.compute_returns(next_value, args.USE_GAE, args.GAMMA, args.TAU)
 
         value_loss, action_loss, dist_entropy = agent.update(rollouts)
 
         rollouts.after_update()
 
         # save for every interval-th episode or for the last epoch
-        if (j % args.save_interval == 0 or j == num_updates - 1) and args.save_dir != "":
-            save_path = os.path.join(args.save_dir, 'ppo')
+        if (j % args.SAVE_INTERVAL == 0 or j == NUM_UPDATES - 1) and args.SAVE_DIR != "":
+            save_path = os.path.join(args.SAVE_DIR, 'ppo')
             try:
                 os.makedirs(save_path)
             except OSError:
@@ -173,28 +172,28 @@ def main():
 
             # A really ugly way to save a model to CPU
             save_model = actor_critic
-            if args.cuda:
+            if args.USE_CUDA:
                 save_model = copy.deepcopy(actor_critic).cpu()
 
             save_model = [save_model,
                           getattr(get_vec_normalize(envs), 'ob_rms', None)]
 
-            torch.save(save_model, os.path.join(save_path, args.env_name + ".pt"))
+            torch.save(save_model, os.path.join(save_path, args.ENV_NAME + ".pt"))
 
-        total_num_steps = (j + 1) * args.num_processes * args.num_steps
+        total_num_steps = (j + 1) * args.NUM_PROCESSES * args.NUM_STEPS
 
         # Periodically print logs
-        if j % args.log_interval == 0 and len(episode_rewards) > 1:
+        if j % args.LOG_INTERVAL == 0 and len(episode_rewards) > 1:
             end = time.time()
             add_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss)
 
         # Periodically evaluate
-        if (args.eval_interval is not None
+        if (args.EVAL_INTERVAL is not None
                 and len(episode_rewards) > 1
                 and j % args.eval_interval == 0):
             eval_envs = make_vec_envs(
-                args.env_name, args.seed + args.num_processes, args.num_processes,
-                args.gamma, eval_log_dir, args.add_timestep, device, True)
+                args.ENV_NAME, args.SEED + args.NUM_PROCESSES, args.NUM_PROCESSES,
+                args.GAMMA, EVAL_LOG_DIR, args.add_timestep, device, True)
 
             vec_norm = get_vec_normalize(eval_envs)
             if vec_norm is not None:
@@ -204,10 +203,10 @@ def main():
             eval_episode_rewards = []
 
             obs = eval_envs.reset()
-            eval_recurrent_hidden_states = torch.zeros(args.num_processes,
+            eval_recurrent_hidden_states = torch.zeros(args.NUM_PROCESSES,
                                                        actor_critic.recurrent_hidden_state_size,
                                                        device=device)
-            eval_masks = torch.zeros(args.num_processes, 1, device=device)
+            eval_masks = torch.zeros(args.NUM_PROCESSES, 1, device=device)
 
             while len(eval_episode_rewards) < 10:
                 with torch.no_grad():

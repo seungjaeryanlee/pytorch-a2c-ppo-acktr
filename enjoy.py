@@ -12,24 +12,26 @@ import sys
 sys.path.append('a2c_ppo_acktr')
 
 parser = argparse.ArgumentParser(description='RL')
-parser.add_argument('--seed', type=int, default=1,
+parser.add_argument('--seed', type=int, default=1, dest='SEED',
                     help='random seed (default: 1)')
-parser.add_argument('--log-interval', type=int, default=10,
+# TODO Not used?
+parser.add_argument('--log-interval', type=int, default=10, dest='LOG_INTERVAL',
                     help='log interval, one log per n updates (default: 10)')
-parser.add_argument('--env-name', default='PongNoFrameskip-v4',
+parser.add_argument('--env-name', default='PongNoFrameskip-v4', dest='ENV_NAME',
                     help='environment to train on (default: PongNoFrameskip-v4)')
-parser.add_argument('--load-dir', default='./trained_models/',
+parser.add_argument('--load-dir', default='./trained_models/', dest='LOAD_DIR',
                     help='directory to save agent logs (default: ./trained_models/)')
-parser.add_argument('--add-timestep', action='store_true', default=False,
+parser.add_argument('--add-timestep', action='store_true', default=False, dest='ADD_TIMESTEP',
                     help='add timestep to observations')
-parser.add_argument('--non-det', action='store_true', default=False,
+parser.add_argument('--non-det', action='store_true', default=False, dest='NON_DET',
                     help='whether to use a non-deterministic policy')
 args = parser.parse_args()
 
-args.det = not args.non_det
+# TODO Why reverse it?
+args.det = not args.NON_DET
 
-env = make_vec_envs(args.env_name, args.seed + 1000, 1,
-                    None, None, args.add_timestep, device='cpu',
+env = make_vec_envs(args.ENV_NAME, args.SEED + 1000, 1,
+                    None, None, args.ADD_TIMESTEP, device='cpu',
                     allow_early_resets=False)
 
 # Get a render function
@@ -37,7 +39,7 @@ render_func = get_render_func(env)
 
 # We need to use the same statistics for normalization as used in training
 actor_critic, ob_rms = \
-    torch.load(os.path.join(args.load_dir, args.env_name + ".pt"))
+    torch.load(os.path.join(args.LOAD_DIR, args.ENV_NAME + ".pt"))
 
 vec_norm = get_vec_normalize(env)
 if vec_norm is not None:
@@ -52,7 +54,7 @@ if render_func is not None:
 
 obs = env.reset()
 
-if args.env_name.find('Bullet') > -1:
+if args.ENV_NAME.find('Bullet') > -1:
     import pybullet as p
 
     torsoId = -1
@@ -70,7 +72,7 @@ while True:
 
     masks.fill_(0.0 if done else 1.0)
 
-    if args.env_name.find('Bullet') > -1:
+    if args.ENV_NAME.find('Bullet') > -1:
         if torsoId > -1:
             distance = 5
             yaw = 0
