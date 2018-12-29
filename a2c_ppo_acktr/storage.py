@@ -80,7 +80,7 @@ class RolloutStorage(object):
         for indices in sampler:
             obs_batch = self.obs[:-1].view(-1, *self.obs.size()[2:])[indices]
             recurrent_hidden_states_batch = self.recurrent_hidden_states[:-1].view(-1,
-                                                                                   self.recurrent_hidden_states.size(-1))[indices]
+                self.recurrent_hidden_states.size(-1))[indices]  # noqa: E128
             actions_batch = self.actions.view(-1, self.actions.size(-1))[indices]
             value_preds_batch = self.value_preds[:-1].view(-1, 1)[indices]
             return_batch = self.returns[:-1].view(-1, 1)[indices]
