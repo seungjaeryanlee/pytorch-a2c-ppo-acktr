@@ -69,6 +69,7 @@ class RolloutStorage(object):
 
     def feed_forward_generator(self, advantages, num_mini_batch):
         num_steps, num_processes = self.rewards.size()[0:2]
+        # TODO Batch size should stay constant for different num_processes
         batch_size = num_processes * num_steps
         assert batch_size >= num_mini_batch, (
             "PPO requires the number of processes ({}) "
@@ -92,6 +93,7 @@ class RolloutStorage(object):
                 value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
 
     def recurrent_generator(self, advantages, num_mini_batch):
+        # TODO How can batch size be preserved here?
         num_processes = self.rewards.size(1)
         assert num_processes >= num_mini_batch, (
             "PPO requires the number of processes ({}) "
@@ -120,6 +122,7 @@ class RolloutStorage(object):
                 old_action_log_probs_batch.append(self.action_log_probs[:, ind])
                 adv_targ.append(advantages[:, ind])
 
+            # TODO N should probably stay constant for different num_processes
             T, N = self.num_steps, num_envs_per_batch
             # These are all tensors of size (T, N, -1)
             obs_batch = torch.stack(obs_batch, 1)
