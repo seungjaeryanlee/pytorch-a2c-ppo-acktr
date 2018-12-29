@@ -34,8 +34,9 @@ class PPO():
         eps: float
             Epsilon for Adam optimizer. Improves numerical stability. Optional.
         max_grad_norm : float
-            Optional.
+            Max norm of the gradient for clipping actor critic gradients. Optional.
         use_clipped_value_loss : bool
+            Clip the value loss to reduce variability during critic training. Introduced in PPO2.
         """
         self.actor_critic = actor_critic
         self.clip_param = clip_param
@@ -50,20 +51,19 @@ class PPO():
 
     def update(self, rollouts):
         advantages = rollouts.returns[:-1] - rollouts.value_preds[:-1]
-        advantages = (advantages - advantages.mean()) / (
-            advantages.std() + 1e-5)
+        # TODO What is this magic number 1e-5?
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
 
         value_loss_epoch = 0
         action_loss_epoch = 0
         dist_entropy_epoch = 0
 
         for e in range(self.ppo_epoch):
+            # RNN or FF
             if self.actor_critic.is_recurrent:
-                data_generator = rollouts.recurrent_generator(
-                    advantages, self.num_mini_batch)
+                data_generator = rollouts.recurrent_generator(advantages, self.num_mini_batch)
             else:
-                data_generator = rollouts.feed_forward_generator(
-                    advantages, self.num_mini_batch)
+                data_generator = rollouts.feed_forward_generator(advantages, self.num_mini_batch)
 
             for sample in data_generator:
                 obs_batch, recurrent_hidden_states_batch, actions_batch, \
@@ -87,6 +87,9 @@ class PPO():
 
                 # Compute VF loss
                 if self.use_clipped_value_loss:
+                    # Clip value loss to reduce variability during Critic training
+                    # Done in OpenAI Baselines PPO2
+                    # https://github.com/openai/baselines/blob/5115707ce9c8a85e1bc4a5258be295162f312d01/baselines/ppo2/model.py#L63
                     value_pred_clipped = value_preds_batch + \
                         (values - value_preds_batch).clamp(-self.clip_param, self.clip_param)
                     value_losses = (values - return_batch).pow(2)
@@ -101,6 +104,10 @@ class PPO():
                 # Aren't the signs wrong?
                 (value_loss * self.value_loss_coef + action_loss -
                  dist_entropy * self.entropy_coef).backward()
+
+                # Clip the gradients (normalize)
+                # Done in OpenAI Baselines PPO2
+                # https://github.com/openai/baselines/blob/5115707ce9c8a85e1bc4a5258be295162f312d01/baselines/ppo2/model.py#L102
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
                                          self.max_grad_norm)
                 self.optimizer.step()
