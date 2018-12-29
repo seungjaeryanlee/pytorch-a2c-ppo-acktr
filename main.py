@@ -49,33 +49,49 @@ def add_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value
     }, step=j)
 
 
-def main():
-    args = get_args()
+def clear_log_dirs(log_dir, eval_log_dir):
+    """
+    Remove old CSV files from previous code execution.
 
-    num_updates = int(args.num_env_steps) // args.num_steps // args.num_processes
-
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-
-    if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
-
+    Parameters
+    ----------
+    log_dir : str
+        Directory where CSV log files are stored.
+    eval_log_dir : str
+        Directory where CSV log files for evaluation are stored.
+    """
+    # Delete old *.monitor.csv files in log_dir
     try:
-        os.makedirs(args.log_dir)
+        os.makedirs(log_dir)
     except OSError:
-        files = glob.glob(os.path.join(args.log_dir, '*.monitor.csv'))
+        files = glob.glob(os.path.join(log_dir, '*.monitor.csv'))
         for f in files:
             os.remove(f)
 
-    eval_log_dir = args.log_dir + "_eval"
-
+    # Delete old *.monitor.csv files in eval_log_dir
     try:
         os.makedirs(eval_log_dir)
     except OSError:
         files = glob.glob(os.path.join(eval_log_dir, '*.monitor.csv'))
         for f in files:
             os.remove(f)
+
+
+def main():
+    args = get_args()
+
+    num_updates = int(args.num_env_steps) // args.num_steps // args.num_processes
+
+    # Make results reproducible
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+    if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+    # Cleanup log directories
+    eval_log_dir = args.log_dir + "_eval"
+    clear_log_dirs(args.log_dir, eval_log_dir)
 
     # 1 core per environment
     torch.set_num_threads(1)
@@ -100,18 +116,21 @@ def main():
                      max_grad_norm=args.max_grad_norm)
     rollouts = RolloutStorage(args.num_steps, args.num_processes,
                               envs.observation_space.shape, envs.action_space,
-                              actor_critic.recurrent_hidden_state_size)    
+                              actor_critic.recurrent_hidden_state_size)
     rollouts.obs[0].copy_(obs)
     rollouts.to(device)
 
+    # TODO Magic number 10
     episode_rewards = deque(maxlen=10)
 
     start = time.time()
     for j in range(num_updates):
 
+        # Decrease learning rate of optimizer linearly
         if args.use_linear_lr_decay:
             update_linear_schedule(agent.optimizer, j, num_updates, args.lr)
 
+        # TODO Why is clip_param modified this way?
         agent.clip_param = args.clip_param * (1 - j / float(num_updates))
 
         for step in range(args.num_steps):
@@ -130,8 +149,7 @@ def main():
                     episode_rewards.append(info['episode']['r'])
 
             # If done then clean the history of observations.
-            masks = torch.FloatTensor([[0.0] if done_ else [1.0]
-                                       for done_ in done])
+            masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
             rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, reward, masks)
 
         with torch.no_grad():
@@ -165,10 +183,12 @@ def main():
 
         total_num_steps = (j + 1) * args.num_processes * args.num_steps
 
+        # Periodically print logs
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             end = time.time()
             add_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss)
 
+        # Periodically evaluate
         if (args.eval_interval is not None
                 and len(episode_rewards) > 1
                 and j % args.eval_interval == 0):
@@ -185,7 +205,8 @@ def main():
 
             obs = eval_envs.reset()
             eval_recurrent_hidden_states = torch.zeros(args.num_processes,
-                                                       actor_critic.recurrent_hidden_state_size, device=device)
+                                                       actor_critic.recurrent_hidden_state_size,
+                                                       device=device)
             eval_masks = torch.zeros(args.num_processes, 1, device=device)
 
             while len(eval_episode_rewards) < 10:
