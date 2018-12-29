@@ -17,7 +17,7 @@ from a2c_ppo_acktr.storage import RolloutStorage
 from a2c_ppo_acktr.utils import get_vec_normalize, update_linear_schedule
 
 
-def add_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss):
+def print_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss):
     """
     Print log to console and add log to wandb.
     """
@@ -47,6 +47,58 @@ def add_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value
         'value_loss': value_loss,
         'action_loss': action_loss,
     }, step=j)
+
+
+def save_progress(actor_critic, envs, ENV_NAME, SAVE_PATH, USE_CUDA):
+    try:
+        os.makedirs(SAVE_PATH)
+    except OSError:
+        pass
+
+    # A really ugly way to save a model to CPU
+    save_model = actor_critic
+    if USE_CUDA:
+        save_model = copy.deepcopy(actor_critic).cpu()
+
+    save_model = [save_model, getattr(get_vec_normalize(envs), 'ob_rms', None)]
+
+    torch.save(save_model, os.path.join(SAVE_PATH, ENV_NAME + ".pt"))
+
+
+def evaluate(actor_critic, eval_envs, device, NUM_PROCESSES):
+    vec_norm = get_vec_normalize(eval_envs)
+    if vec_norm is not None:
+        vec_norm.eval()
+        # TODO Commented line uses "envs" instead of "eval_envs"
+        # vec_norm.ob_rms = get_vec_normalize(envs).ob_rms
+        vec_norm.ob_rms = get_vec_normalize(eval_envs).ob_rms
+
+    eval_episode_rewards = []
+
+    obs = eval_envs.reset()
+    eval_recurrent_hidden_states = torch.zeros(NUM_PROCESSES,
+                                               actor_critic.recurrent_hidden_state_size,
+                                               device=device)
+    eval_masks = torch.zeros(NUM_PROCESSES, 1, device=device)
+
+    # TODO: Magic number 10
+    while len(eval_episode_rewards) < 10:
+        with torch.no_grad():
+            _, action, _, eval_recurrent_hidden_states = actor_critic.act(
+                obs, eval_recurrent_hidden_states, eval_masks, deterministic=True)
+
+        # Obser reward and next obs
+        obs, reward, done, infos = eval_envs.step(action)
+
+        eval_masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
+        for info in infos:
+            if 'episode' in info.keys():
+                eval_episode_rewards.append(info['episode']['r'])
+
+    eval_envs.close()
+
+    print(" Evaluation using {} episodes: mean reward {:.5f}\n".
+          format(len(eval_episode_rewards), np.mean(eval_episode_rewards)))
 
 
 def clear_log_dirs(log_dir, eval_log_dir):
@@ -162,30 +214,17 @@ def main():
 
         rollouts.after_update()
 
+        total_num_steps = (j + 1) * args.NUM_PROCESSES * args.NUM_STEPS
+
         # save for every interval-th episode or for the last epoch
         if (j % args.SAVE_INTERVAL == 0 or j == NUM_UPDATES - 1) and args.SAVE_DIR != "":
-            save_path = os.path.join(args.SAVE_DIR, 'ppo')
-            try:
-                os.makedirs(save_path)
-            except OSError:
-                pass
-
-            # A really ugly way to save a model to CPU
-            save_model = actor_critic
-            if args.USE_CUDA:
-                save_model = copy.deepcopy(actor_critic).cpu()
-
-            save_model = [save_model,
-                          getattr(get_vec_normalize(envs), 'ob_rms', None)]
-
-            torch.save(save_model, os.path.join(save_path, args.ENV_NAME + ".pt"))
-
-        total_num_steps = (j + 1) * args.NUM_PROCESSES * args.NUM_STEPS
+            SAVE_PATH = os.path.join(args.SAVE_DIR, 'ppo')
+            save_progress(actor_critic, envs, args.ENV_NAME, SAVE_PATH, args.USE_CUDA)
 
         # Periodically print logs
         if j % args.LOG_INTERVAL == 0 and len(episode_rewards) > 1:
             end = time.time()
-            add_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss)
+            print_log(j, total_num_steps, start, end, episode_rewards, dist_entropy, value_loss, action_loss)
 
         # Periodically evaluate
         if (args.EVAL_INTERVAL is not None
@@ -194,39 +233,7 @@ def main():
             eval_envs = make_vec_envs(
                 args.ENV_NAME, args.SEED + args.NUM_PROCESSES, args.NUM_PROCESSES,
                 args.GAMMA, EVAL_LOG_DIR, args.add_timestep, device, True)
-
-            vec_norm = get_vec_normalize(eval_envs)
-            if vec_norm is not None:
-                vec_norm.eval()
-                vec_norm.ob_rms = get_vec_normalize(envs).ob_rms
-
-            eval_episode_rewards = []
-
-            obs = eval_envs.reset()
-            eval_recurrent_hidden_states = torch.zeros(args.NUM_PROCESSES,
-                                                       actor_critic.recurrent_hidden_state_size,
-                                                       device=device)
-            eval_masks = torch.zeros(args.NUM_PROCESSES, 1, device=device)
-
-            while len(eval_episode_rewards) < 10:
-                with torch.no_grad():
-                    _, action, _, eval_recurrent_hidden_states = actor_critic.act(
-                        obs, eval_recurrent_hidden_states, eval_masks, deterministic=True)
-
-                # Obser reward and next obs
-                obs, reward, done, infos = eval_envs.step(action)
-
-                eval_masks = torch.FloatTensor([[0.0] if done_ else [1.0]
-                                                for done_ in done])
-                for info in infos:
-                    if 'episode' in info.keys():
-                        eval_episode_rewards.append(info['episode']['r'])
-
-            eval_envs.close()
-
-            print(" Evaluation using {} episodes: mean reward {:.5f}\n".
-                  format(len(eval_episode_rewards),
-                         np.mean(eval_episode_rewards)))
+            evaluate(actor_critic, eval_envs, device, args.NUM_PROCESSES)
 
 
 if __name__ == "__main__":
